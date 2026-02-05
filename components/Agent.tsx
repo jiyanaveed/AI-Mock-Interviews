@@ -34,6 +34,7 @@ const Agent = ({
   const [messages, setMessages] = useState<SavedMessage[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [lastMessage, setLastMessage] = useState<string>("");
+  const [isProcessingFeedback, setIsProcessingFeedback] = useState(false);
 
   useEffect(() => {
     const onCallStart = () => {
@@ -88,31 +89,56 @@ const Agent = ({
     }
 
     const handleGenerateFeedback = async (messages: SavedMessage[]) => {
-      console.log("handleGenerateFeedback");
+      console.log("handleGenerateFeedback called");
+      console.log("Messages count:", messages.length);
+      console.log("isProcessingFeedback:", isProcessingFeedback);
 
-      const { success, feedbackId: id } = await createFeedback({
-        interviewId: interviewId!,
-        userId: userId!,
-        transcript: messages,
-        feedbackId,
-      });
+      if (isProcessingFeedback) {
+        console.log("Already processing feedback, skipping...");
+        return;
+      }
 
-      if (success && id) {
-        router.push(`/interview/${interviewId}/feedback`);
-      } else {
-        console.log("Error saving feedback");
+      if (messages.length === 0) {
+        console.log("No messages to process, redirecting to home");
+        router.push("/");
+        return;
+      }
+
+      setIsProcessingFeedback(true);
+
+      try {
+        console.log("Calling createFeedback...");
+        const { success, feedbackId: id } = await createFeedback({
+          interviewId: interviewId!,
+          userId: userId!,
+          transcript: messages,
+          feedbackId,
+        });
+
+        console.log("createFeedback result:", { success, feedbackId: id });
+
+        if (success && id) {
+          console.log("Navigating to feedback page:", `/interview/${interviewId}/feedback`);
+          router.push(`/interview/${interviewId}/feedback`);
+        } else {
+          console.log("Error saving feedback");
+          router.push("/");
+        }
+      } catch (error) {
+        console.error("Exception in handleGenerateFeedback:", error);
         router.push("/");
       }
     };
 
-    if (callStatus === CallStatus.FINISHED) {
+    if (callStatus === CallStatus.FINISHED && !isProcessingFeedback) {
+      console.log("Call finished, type:", type);
       if (type === "generate") {
         router.push("/");
       } else {
         handleGenerateFeedback(messages);
       }
     }
-  }, [messages, callStatus, feedbackId, interviewId, router, type, userId]);
+  }, [messages, callStatus, feedbackId, interviewId, router, type, userId, isProcessingFeedback]);
 
   const handleCall = async () => {
     setCallStatus(CallStatus.CONNECTING);
@@ -194,9 +220,19 @@ const Agent = ({
         </div>
       )}
 
-      <div className="w-full flex justify-center">
+      <div className="w-full flex flex-col items-center gap-4">
+        {isProcessingFeedback && (
+          <div className="text-center">
+            <p className="text-white-200 animate-pulse">Generating feedback...</p>
+          </div>
+        )}
+
         {callStatus !== "ACTIVE" ? (
-          <button className="relative btn-call" onClick={() => handleCall()}>
+          <button
+            className="relative btn-call"
+            onClick={() => handleCall()}
+            disabled={isProcessingFeedback}
+          >
             <span
               className={cn(
                 "absolute animate-ping rounded-full opacity-75",
@@ -211,7 +247,11 @@ const Agent = ({
             </span>
           </button>
         ) : (
-          <button className="btn-disconnect" onClick={() => handleDisconnect()}>
+          <button
+            className="btn-disconnect"
+            onClick={() => handleDisconnect()}
+            disabled={isProcessingFeedback}
+          >
             End
           </button>
         )}

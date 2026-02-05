@@ -9,6 +9,9 @@ import { feedbackSchema } from "@/constants";
 export async function createFeedback(params: CreateFeedbackParams) {
   const { interviewId, userId, transcript, feedbackId } = params;
 
+  console.log("=== createFeedback START ===");
+  console.log("Params:", { interviewId, userId, feedbackId, transcriptLength: transcript.length });
+
   try {
     const formattedTranscript = transcript
       .map(
@@ -17,6 +20,9 @@ export async function createFeedback(params: CreateFeedbackParams) {
       )
       .join("");
 
+    console.log("Formatted transcript length:", formattedTranscript.length);
+
+    console.log("Calling Gemini AI...");
     const { object } = await generateObject({
       model: google("gemini-2.0-flash-001", {
         structuredOutputs: false,
@@ -27,16 +33,29 @@ export async function createFeedback(params: CreateFeedbackParams) {
         Transcript:
         ${formattedTranscript}
 
-        Please score the candidate from 0 to 100 in the following areas. Do not add categories other than the ones provided:
-        - **Communication Skills**: Clarity, articulation, structured responses.
-        - **Technical Knowledge**: Understanding of key concepts for the role.
-        - **Problem-Solving**: Ability to analyze problems and propose solutions.
-        - **Cultural & Role Fit**: Alignment with company values and job role.
-        - **Confidence & Clarity**: Confidence in responses, engagement, and clarity.
+        Provide scores and evaluations for EXACTLY these 5 categories in this order:
+        1. Communication Skills - Clarity, articulation, structured responses
+        2. Technical Knowledge - Understanding of key concepts for the role
+        3. Problem Solving - Ability to analyze problems and propose solutions
+        4. Cultural Fit - Alignment with company values and job role
+        5. Confidence and Clarity - Confidence in responses, engagement, and clarity
+
+        Each category should have:
+        - name: The exact category name as shown above
+        - score: A number from 0 to 100
+        - comment: Detailed feedback for that category
+
+        Also provide:
+        - totalScore: Overall score from 0 to 100
+        - strengths: Array of candidate's strengths
+        - areasForImprovement: Array of areas where they can improve
+        - finalAssessment: Overall summary of the interview
         `,
       system:
         "You are a professional interviewer analyzing a mock interview. Your task is to evaluate the candidate based on structured categories",
     });
+
+    console.log("Gemini AI response received:", object);
 
     const feedback = {
       interviewId: interviewId,
@@ -49,18 +68,26 @@ export async function createFeedback(params: CreateFeedbackParams) {
       createdAt: new Date().toISOString(),
     };
 
+    console.log("Feedback object created:", feedback);
+
     let feedbackRef;
 
     if (feedbackId) {
+      console.log("Updating existing feedback:", feedbackId);
       feedbackRef = db.collection("feedback").doc(feedbackId);
     } else {
+      console.log("Creating new feedback document");
       feedbackRef = db.collection("feedback").doc();
     }
 
+    console.log("Saving to Firebase with ID:", feedbackRef.id);
     await feedbackRef.set(feedback);
 
+    console.log("=== createFeedback SUCCESS ===");
+    console.log("Returning:", { success: true, feedbackId: feedbackRef.id });
     return { success: true, feedbackId: feedbackRef.id };
   } catch (error) {
+    console.error("=== createFeedback ERROR ===");
     console.error("Error saving feedback:", error);
     return { success: false };
   }
@@ -77,6 +104,9 @@ export async function getFeedbackByInterviewId(
 ): Promise<Feedback | null> {
   const { interviewId, userId } = params;
 
+  console.log("=== getFeedbackByInterviewId START ===");
+  console.log("Query params:", { interviewId, userId });
+
   const querySnapshot = await db
     .collection("feedback")
     .where("interviewId", "==", interviewId)
@@ -84,9 +114,16 @@ export async function getFeedbackByInterviewId(
     .limit(1)
     .get();
 
-  if (querySnapshot.empty) return null;
+  console.log("Query results:", { empty: querySnapshot.empty, size: querySnapshot.size });
+
+  if (querySnapshot.empty) {
+    console.log("No feedback found");
+    return null;
+  }
 
   const feedbackDoc = querySnapshot.docs[0];
+  console.log("Feedback found:", feedbackDoc.id);
+  console.log("=== getFeedbackByInterviewId END ===");
   return { id: feedbackDoc.id, ...feedbackDoc.data() } as Feedback;
 }
 
