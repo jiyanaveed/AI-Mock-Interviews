@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 import { vapi } from "@/lib/vapi.sdk";
-import { interviewer } from "@/constants";
 import { createFeedback } from "@/lib/actions/general.action";
+import { interviewer } from "@/constants";
 
 enum CallStatus {
   INACTIVE = "INACTIVE",
@@ -34,36 +34,27 @@ const Agent = ({
   const [messages, setMessages] = useState<SavedMessage[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [lastMessage, setLastMessage] = useState<string>("");
-  const [isProcessingFeedback, setIsProcessingFeedback] = useState(false);
 
+  // --- VAPI Event Handlers ---
   useEffect(() => {
-    const onCallStart = () => {
-      setCallStatus(CallStatus.ACTIVE);
-    };
-
-    const onCallEnd = () => {
-      setCallStatus(CallStatus.FINISHED);
-    };
-
+    const onCallStart = () => setCallStatus(CallStatus.ACTIVE);
+    const onCallEnd = () => setCallStatus(CallStatus.FINISHED);
     const onMessage = (message: Message) => {
       if (message.type === "transcript" && message.transcriptType === "final") {
         const newMessage = { role: message.role, content: message.transcript };
         setMessages((prev) => [...prev, newMessage]);
       }
     };
-
-    const onSpeechStart = () => {
-      console.log("speech start");
-      setIsSpeaking(true);
-    };
-
-    const onSpeechEnd = () => {
-      console.log("speech end");
-      setIsSpeaking(false);
-    };
-
+    const onSpeechStart = () => setIsSpeaking(true);
+    const onSpeechEnd = () => setIsSpeaking(false);
     const onError = (error: Error) => {
-      console.log("Error:", error);
+      console.error("VAPI Error details:", {
+        message: error?.message,
+        stack: error?.stack,
+        error: error,
+        type: typeof error,
+      });
+      setCallStatus(CallStatus.INACTIVE);
     };
 
     vapi.on("call-start", onCallStart);
@@ -83,31 +74,12 @@ const Agent = ({
     };
   }, []);
 
+  // --- Handle Feedback Generation ---
   useEffect(() => {
-    if (messages.length > 0) {
-      setLastMessage(messages[messages.length - 1].content);
-    }
+    if (messages.length > 0) setLastMessage(messages[messages.length - 1].content);
 
     const handleGenerateFeedback = async (messages: SavedMessage[]) => {
-      console.log("handleGenerateFeedback called");
-      console.log("Messages count:", messages.length);
-      console.log("isProcessingFeedback:", isProcessingFeedback);
-
-      if (isProcessingFeedback) {
-        console.log("Already processing feedback, skipping...");
-        return;
-      }
-
-      if (messages.length === 0) {
-        console.log("No messages to process, redirecting to home");
-        router.push("/");
-        return;
-      }
-
-      setIsProcessingFeedback(true);
-
       try {
-        console.log("Calling createFeedback...");
         const { success, feedbackId: id } = await createFeedback({
           interviewId: interviewId!,
           userId: userId!,
@@ -115,62 +87,86 @@ const Agent = ({
           feedbackId,
         });
 
-        console.log("createFeedback result:", { success, feedbackId: id });
-
         if (success && id) {
-          console.log("Navigating to feedback page:", `/interview/${interviewId}/feedback`);
           router.push(`/interview/${interviewId}/feedback`);
         } else {
-          console.log("Error saving feedback");
+          console.error("Error saving feedback");
           router.push("/");
         }
-      } catch (error) {
-        console.error("Exception in handleGenerateFeedback:", error);
+      } catch (err) {
+        console.error("Feedback generation error:", err);
         router.push("/");
       }
     };
 
-    if (callStatus === CallStatus.FINISHED && !isProcessingFeedback) {
-      console.log("Call finished, type:", type);
+    if (callStatus === CallStatus.FINISHED) {
       if (type === "generate") {
         router.push("/");
       } else {
         handleGenerateFeedback(messages);
       }
     }
-  }, [messages, callStatus, feedbackId, interviewId, router, type, userId, isProcessingFeedback]);
+  }, [messages, callStatus, feedbackId, interviewId, router, type, userId]);
 
+  // --- Call Handler ---
   const handleCall = async () => {
     setCallStatus(CallStatus.CONNECTING);
 
-    if (type === "generate") {
-      await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
-        variableValues: {
-          username: userName,
-          userid: userId,
-        },
-      });
-    } else {
-      let formattedQuestions = "";
-      if (questions) {
-        formattedQuestions = questions
-          .map((question) => `- ${question}`)
-          .join("\n");
-      }
+    try {
+      if (type === "generate") {
+        const workflowId = process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID;
 
-      await vapi.start(interviewer, {
-        variableValues: {
-          questions: formattedQuestions,
-        },
-      });
+        if (!workflowId) {
+          console.error("Missing NEXT_PUBLIC_VAPI_WORKFLOW_ID");
+          setCallStatus(CallStatus.INACTIVE);
+          return;
+        }
+
+        console.log("Starting workflow:", { workflowId, userName, userId });
+
+        // In VAPI SDK v2.5+, workflow is the 4th parameter
+        await vapi.start(
+          undefined, // assistant
+          undefined, // assistantOverrides
+          undefined, // squad
+          workflowId, // workflow
+          {
+            variableValues: {
+              username: userName,
+              userid: userId,
+            },
+          }
+        );
+      } else {
+        let formattedQuestions = "";
+        if (questions) {
+          formattedQuestions = questions
+            .map((question) => `- ${question}`)
+            .join("\n");
+        }
+
+        console.log("Starting interview with questions");
+
+        await vapi.start(interviewer, {
+          variableValues: {
+            questions: formattedQuestions,
+          },
+        });
+      }
+    } catch (error) {
+      console.error("Error starting VAPI call:", error);
+      setCallStatus(CallStatus.INACTIVE);
     }
   };
 
+
+  // --- Disconnect Handler ---
   const handleDisconnect = () => {
     setCallStatus(CallStatus.FINISHED);
     vapi.stop();
   };
 
+  // --- JSX ---
   return (
     <>
       <div className="call-view">
@@ -220,38 +216,23 @@ const Agent = ({
         </div>
       )}
 
-      <div className="w-full flex flex-col items-center gap-4">
-        {isProcessingFeedback && (
-          <div className="text-center">
-            <p className="text-white-200 animate-pulse">Generating feedback...</p>
-          </div>
-        )}
-
-        {callStatus !== "ACTIVE" ? (
-          <button
-            className="relative btn-call"
-            onClick={() => handleCall()}
-            disabled={isProcessingFeedback}
-          >
+      <div className="w-full flex justify-center mt-4">
+        {callStatus !== CallStatus.ACTIVE ? (
+          <button className="relative btn-call" onClick={handleCall}>
             <span
               className={cn(
                 "absolute animate-ping rounded-full opacity-75",
-                callStatus !== "CONNECTING" && "hidden"
+                callStatus !== CallStatus.CONNECTING && "hidden"
               )}
             />
-
             <span className="relative">
-              {callStatus === "INACTIVE" || callStatus === "FINISHED"
+              {callStatus === CallStatus.INACTIVE || callStatus === CallStatus.FINISHED
                 ? "Call"
                 : ". . ."}
             </span>
           </button>
         ) : (
-          <button
-            className="btn-disconnect"
-            onClick={() => handleDisconnect()}
-            disabled={isProcessingFeedback}
-          >
+          <button className="btn-disconnect" onClick={handleDisconnect}>
             End
           </button>
         )}
