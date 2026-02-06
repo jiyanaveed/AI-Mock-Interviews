@@ -3,11 +3,20 @@ import Image from "next/image";
 import { ReactNode } from "react";
 import { redirect } from "next/navigation";
 
-import { isAuthenticated } from "@/lib/actions/auth.action";
+import { isAuthenticated, getCurrentUser, signOut } from "@/lib/actions/auth.action";
+import { Button } from "@/components/ui/button";
 
 const Layout = async ({ children }: { children: ReactNode }) => {
   const isUserAuthenticated = await isAuthenticated();
   if (!isUserAuthenticated) redirect("/sign-in");
+
+  const user = await getCurrentUser();
+
+  const handleSignOut = async () => {
+    "use server";
+    await signOut();
+    redirect("/sign-in");
+  };
 
   return (
     <div className="root-layout">
@@ -16,6 +25,17 @@ const Layout = async ({ children }: { children: ReactNode }) => {
           <Image src="/logo.svg" alt="MockMate Logo" width={38} height={32} />
           <h2 className="text-primary-100">PrepWise</h2>
         </Link>
+
+        <div className="flex items-center gap-4">
+          <span className="text-white-200 max-sm:hidden">
+            {user?.name || user?.email}
+          </span>
+          <form action={handleSignOut}>
+            <Button type="submit" variant="outline" size="sm">
+              Sign Out
+            </Button>
+          </form>
+        </div>
       </nav>
 
       {children}
