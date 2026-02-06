@@ -104,8 +104,10 @@ export async function getFeedbackByInterviewId(
 ): Promise<Feedback | null> {
   const { interviewId, userId } = params;
 
-  console.log("=== getFeedbackByInterviewId START ===");
-  console.log("Query params:", { interviewId, userId });
+  if (process.env.NODE_ENV === "development") {
+    console.log("=== getFeedbackByInterviewId START ===");
+    console.log("Query params:", { interviewId, userId });
+  }
 
   const querySnapshot = await db
     .collection("feedback")
@@ -114,16 +116,22 @@ export async function getFeedbackByInterviewId(
     .limit(1)
     .get();
 
-  console.log("Query results:", { empty: querySnapshot.empty, size: querySnapshot.size });
+  if (process.env.NODE_ENV === "development") {
+    console.log("Query results:", { empty: querySnapshot.empty, size: querySnapshot.size });
+  }
 
   if (querySnapshot.empty) {
-    console.log("No feedback found");
+    if (process.env.NODE_ENV === "development") {
+      console.log("No feedback found");
+    }
     return null;
   }
 
   const feedbackDoc = querySnapshot.docs[0];
-  console.log("Feedback found:", feedbackDoc.id);
-  console.log("=== getFeedbackByInterviewId END ===");
+  if (process.env.NODE_ENV === "development") {
+    console.log("Feedback found:", feedbackDoc.id);
+    console.log("=== getFeedbackByInterviewId END ===");
+  }
   return { id: feedbackDoc.id, ...feedbackDoc.data() } as Feedback;
 }
 
